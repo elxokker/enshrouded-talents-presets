@@ -1,0 +1,4 @@
+# Optional language override.
+# Leave this file commented or delete it to auto-detect from Steam's appmanifest_1203620.acf.
+# Supported values: english, spanish, french, german, italian, brazilian.
+# spanish
