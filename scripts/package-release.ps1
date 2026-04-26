@@ -35,7 +35,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination (Join-Path
 $checksums = Get-ChildItem -LiteralPath $packageRoot -Recurse -File |
     Sort-Object FullName |
     ForEach-Object {
-        $relative = Resolve-Path -LiteralPath $_.FullName -Relative
+        $relative = $_.FullName.Substring($packageRoot.Length + 1).Replace('\', '/')
         $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
         "$($hash.Hash)  $relative"
     }
@@ -45,7 +45,10 @@ $zip = Join-Path $distRoot "$packageName.zip"
 if (Test-Path -LiteralPath $zip) {
     Remove-Item -LiteralPath $zip -Force
 }
-Compress-Archive -LiteralPath (Join-Path $packageRoot '*') -DestinationPath $zip -Force
+Compress-Archive -Path (Join-Path $packageRoot '*') -DestinationPath $zip -Force
+if (!(Test-Path -LiteralPath $zip)) {
+    throw "Expected package zip was not created: $zip"
+}
 
 Write-Host "Package folder: $packageRoot"
 Write-Host "Package zip: $zip"
