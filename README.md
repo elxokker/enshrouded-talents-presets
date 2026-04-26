@@ -82,8 +82,3 @@ examples/                     Example preset file.
 scripts/                      Build and packaging scripts.
 docs/                         Installation, build, and compatibility notes.
 ```
-
-## Disclaimer
-
-Use at your own risk. This project patches process memory at runtime and is not
-affiliated with Keen Games.
