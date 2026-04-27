@@ -3,7 +3,7 @@
 In-game talent presets for Enshrouded, plus an optional dedicated-server proxy
 that makes talent unlearning free.
 
-Supported game build: `999467`
+Supported game build: `1004637`
 
 Client mod id: `talents_presets`
 
