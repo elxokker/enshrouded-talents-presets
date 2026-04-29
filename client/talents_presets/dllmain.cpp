@@ -83,7 +83,7 @@ namespace
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.29",
+        "0.5.30",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -126,6 +126,8 @@ namespace
     volatile LONG g_pendingActionNodeIdBits = 0;
     volatile LONG64 g_pendingActionNodePtr = 0;
     volatile LONG g_presetUiVisible = 0;
+    volatile LONG g_hotkeyThreadStop = 0;
+    volatile LONG g_lastF4HotkeyTick = 0;
 
     DWORD g_lastLogTick = 0;
     std::uint32_t g_lastLoggedNodeId = 0;
@@ -327,6 +329,8 @@ namespace
     DWORD g_lastPresetQueueProcessTick = 0;
     HANDLE g_presetUiThread = nullptr;
     DWORD g_presetUiThreadId = 0;
+    HANDLE g_hotkeyThread = nullptr;
+    DWORD g_hotkeyThreadId = 0;
     HWND g_presetWindow = nullptr;
     HWND g_presetNameEdits[PRESET_COUNT] = {};
     HWND g_presetApplyButtons[PRESET_COUNT] = {};
@@ -2666,8 +2670,10 @@ namespace
         if (hwnd == nullptr)
         {
             SetPresetStatus(Text().createUiFailed);
+            Log("[TalentPresets] preset panel window creation failed");
             return 0;
         }
+        Log("[TalentPresets] preset panel window created");
 
         MSG msg = {};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -2742,6 +2748,84 @@ namespace
         HWND window = g_presetWindow;
         if (window != nullptr)
             PostMessageW(window, WM_TALENT_PRESETS_SHOW, static_cast<WPARAM>(newVisible), 0);
+    }
+
+    bool ClaimF4Hotkey(DWORD now)
+    {
+        const LONG last = InterlockedCompareExchange(&g_lastF4HotkeyTick, 0, 0);
+        if (now - static_cast<DWORD>(last) < 300)
+            return false;
+
+        return InterlockedCompareExchange(&g_lastF4HotkeyTick, static_cast<LONG>(now), last) == last;
+    }
+
+    void HandleF4Hotkey(const char* source)
+    {
+        if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+        {
+            Log("[TalentPresets] Alt+F4 ignored by preset panel");
+            return;
+        }
+
+        const DWORD now = GetTickCount();
+        if (!ClaimF4Hotkey(now))
+            return;
+
+        std::ostringstream oss;
+        oss << "[TalentPresets] F4 pressed";
+        if (source != nullptr && source[0] != '\0')
+            oss << " (" << source << ")";
+        Log(oss.str());
+        TogglePresetOverlay();
+    }
+
+    unsigned __stdcall HotkeyThreadProc(void*)
+    {
+        Log("[TalentPresets] hotkey monitor started");
+        bool wasF4Down = false;
+        while (InterlockedCompareExchange(&g_hotkeyThreadStop, 0, 0) == 0)
+        {
+            const bool isF4Down = (GetAsyncKeyState(VK_F4) & 0x8000) != 0;
+            if (isF4Down && !wasF4Down)
+                HandleF4Hotkey("hotkey-thread");
+
+            wasF4Down = isF4Down;
+            Sleep(20);
+        }
+        Log("[TalentPresets] hotkey monitor stopped");
+        return 0;
+    }
+
+    bool StartHotkeyThread()
+    {
+        if (g_hotkeyThread != nullptr)
+            return true;
+
+        InterlockedExchange(&g_hotkeyThreadStop, 0);
+        unsigned int threadId = 0;
+        HANDLE thread = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, 0, HotkeyThreadProc, nullptr, 0, &threadId));
+        if (thread == nullptr)
+        {
+            Log("[TalentPresets] hotkey monitor failed to start");
+            return false;
+        }
+
+        g_hotkeyThread = thread;
+        g_hotkeyThreadId = threadId;
+        return true;
+    }
+
+    void StopHotkeyThread()
+    {
+        InterlockedExchange(&g_hotkeyThreadStop, 1);
+
+        if (g_hotkeyThread != nullptr)
+        {
+            WaitForSingleObject(g_hotkeyThread, 750);
+            CloseHandle(g_hotkeyThread);
+            g_hotkeyThread = nullptr;
+            g_hotkeyThreadId = 0;
+        }
     }
 
     std::string HexBytes(uintptr_t address, std::size_t count)
@@ -4304,7 +4388,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.29 for Enshrouded Steam build 23008567");
+        Log("[TalentPresets] loading live talent preset panel 0.5.30 for Enshrouded Steam build 23008567");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
@@ -4354,6 +4438,7 @@ public:
 
     void Unload(ModContext*) override
     {
+        StopHotkeyThread();
         ShutdownPresetUiThread();
         delete g_skillNodeStatusHook;
         g_skillNodeStatusHook = nullptr;
@@ -4378,6 +4463,7 @@ public:
         if (g_skillActionCallsiteHook != nullptr)
             ok = g_skillActionCallsiteHook->activate() && ok;
         EnsurePresetUiThread();
+        StartHotkeyThread();
         active = ok;
         modContext->Log(ok ? "[TalentPresets] live talent preset panel activated" : "[TalentPresets] live talent preset panel failed to activate");
     }
@@ -4392,6 +4478,7 @@ public:
             g_skillTreeContextHook->deactivate();
         if (g_skillActionCallsiteHook != nullptr && g_skillActionCallsiteHook->active)
             g_skillActionCallsiteHook->deactivate();
+        StopHotkeyThread();
         if (g_presetWindow != nullptr)
             PostMessageW(g_presetWindow, WM_TALENT_PRESETS_SHOW, 0, 0);
         InterlockedExchange(&g_presetUiVisible, 0);
@@ -4432,17 +4519,7 @@ public:
         ProcessPresetJob(now);
 
         if ((GetAsyncKeyState(VK_F4) & 1) != 0)
-        {
-            if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
-            {
-                Log("[TalentPresets] Alt+F4 ignored by preset panel");
-            }
-            else
-            {
-                Log("[TalentPresets] F4 pressed");
-                TogglePresetOverlay();
-            }
-        }
+            HandleF4Hotkey("loader-update");
 
         if ((GetAsyncKeyState(VK_F8) & 1) != 0)
         {
