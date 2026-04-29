@@ -3,7 +3,7 @@ param(
     [string]$Configuration = 'Release',
     [ValidateSet('x64')]
     [string]$Platform = 'x64',
-    [string]$GameVersion = '999467',
+    [string]$GameVersion = '1004637',
     [string]$ModVersion = '0.5.24'
 )
 

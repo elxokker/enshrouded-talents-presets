@@ -23,7 +23,7 @@ Client mod version: `0.5.24`
 
 ## Runtime Requirements
 
-- Enshrouded build `999467`.
+- Enshrouded build `1004637`.
 - Shroudtopia/EML installed on each client that uses the panel.
 - The server proxy is needed if you want unlearning to cost no runes on a
   dedicated server.
@@ -58,7 +58,7 @@ Supported values are `english`, `spanish`, `french`, `german`, `italian`, and
 ```powershell
 .\scripts\build-client.ps1 -Configuration Release
 .\scripts\build-server.ps1 -Configuration Release
-.\scripts\package-release.ps1 -Configuration Release -GameVersion 999467
+.\scripts\package-release.ps1 -Configuration Release -GameVersion 1004637
 ```
 
 See [docs/BUILDING.md](docs/BUILDING.md) for full build instructions.
@@ -69,7 +69,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Compatibility
 
-This is a reverse-engineered mod for Enshrouded build `999467`. Offsets must be
+This is a reverse-engineered mod for Enshrouded build `1004637`. Offsets must be
 re-verified after game updates. See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Repository Layout

@@ -4100,7 +4100,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.24 for Enshrouded 999467");
+        Log("[TalentPresets] loading live talent preset panel 0.5.24 for Enshrouded 1004637");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);

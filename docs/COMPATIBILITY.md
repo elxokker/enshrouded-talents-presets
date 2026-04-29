@@ -1,6 +1,6 @@
 # Compatibility
 
-This source tree targets Enshrouded build `999467`.
+This source tree targets Enshrouded build `1004637`.
 
 The client mod and server proxy both rely on reverse-engineered in-memory
 offsets. If Enshrouded updates, the binaries can stop working, fail their byte
@@ -10,7 +10,7 @@ checks, or crash. Re-verify offsets before using this on a newer build.
 
 - Client mod: Shroudtopia/EML-compatible DLL loaded from `mods/talents_presets`.
 - Server proxy: `dbghelp.dll` proxy loaded beside `enshrouded_server.exe`.
-- Game build: `999467`.
+- Game build: `1004637`.
 - Client mod id: `talents_presets`.
 - Client mod version: `0.5.24`.
 

@@ -38,12 +38,12 @@ build/x64/Release/server/dbghelp.dll
 ## Build Release Package
 
 ```powershell
-.\scripts\package-release.ps1 -Configuration Release -GameVersion 999467
+.\scripts\package-release.ps1 -Configuration Release -GameVersion 1004637
 ```
 
 Output:
 
 ```text
-dist/enshrouded-talents-presets-999467-0.5.24/
-dist/enshrouded-talents-presets-999467-0.5.24.zip
+dist/enshrouded-talents-presets-1004637-0.5.24/
+dist/enshrouded-talents-presets-1004637-0.5.24.zip
 ```
