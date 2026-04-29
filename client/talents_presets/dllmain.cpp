@@ -43,6 +43,7 @@ namespace
     constexpr std::size_t TALENT_QUEUE_OFFSET = 0x51530;
     constexpr std::size_t TALENT_POINTS_STATE_OFFSET = 0x28;
     constexpr std::size_t TALENT_MESSAGE_NODE_ID_OFFSET = 0x5B0;
+    constexpr std::size_t TALENT_MESSAGE_RESET_SKILLS_OFFSET = TALENT_MESSAGE_NODE_ID_OFFSET + 0x04;
     constexpr std::uint8_t TALENT_MESSAGE_LEARN = 0x42;
     constexpr std::uint8_t TALENT_MESSAGE_UNLEARN = 0x43;
     constexpr DWORD NODE_CAPTURE_STALE_MS = 10000;
@@ -75,13 +76,14 @@ namespace
     constexpr DWORD PRESET_CLEAR_ACTION_INTERVAL_MS = 160;
     constexpr DWORD PRESET_LEARN_ACTION_INTERVAL_MS = 260;
     constexpr DWORD PRESET_PHASE_SETTLE_MS = 900;
+    constexpr DWORD PRESET_BULK_CLEAR_SETTLE_MS = 1200;
     constexpr DWORD PRESET_CLEAR_VERIFY_MIN_MS = 40;
     constexpr DWORD PRESET_LEARN_VERIFY_MIN_MS = 80;
 
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.26",
+        "0.5.27",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -248,6 +250,7 @@ namespace
         bool unlearn = false;
         int attempts = 0;
         int expectedLevelAfter = -1;
+        bool resetAll = false;
     };
 
     enum class PresetActionResult
@@ -265,6 +268,7 @@ namespace
         int clearPass = 0;
         int applyPass = 0;
         DWORD waitUntilTick = 0;
+        bool bulkResetAttempted = false;
         std::string name;
         std::vector<PresetNode> targetNodes;
     };
@@ -1659,6 +1663,11 @@ namespace
         return actions;
     }
 
+    std::vector<QueuedTalentAction> BuildBulkClearTalentActions()
+    {
+        return { { 0, false, 0, -1, true } };
+    }
+
     bool IsUsableNodeCoordinate(float value)
     {
         return std::isfinite(value) && std::fabs(value) > 0.001f && std::fabs(value) < 100000.0f;
@@ -1871,17 +1880,20 @@ namespace
             return;
         }
 
-        std::vector<QueuedTalentAction> actions = BuildClearTalentActions(currentNodes);
-        if (actions.empty())
-            actions = BuildApplyTalentActions(currentNodes, preset.nodes);
+        const std::vector<QueuedTalentAction> nodeClearActions = BuildClearTalentActions(currentNodes);
+        const bool needsClear = !nodeClearActions.empty();
+        std::vector<QueuedTalentAction> actions = needsClear
+            ? BuildBulkClearTalentActions()
+            : BuildApplyTalentActions(currentNodes, preset.nodes);
 
         {
             std::lock_guard<std::mutex> lock(g_presetJobMutex);
             g_presetJob = {};
             g_presetJob.mode = PresetJobMode::ApplyPreset;
-            g_presetJob.phase = BuildClearTalentActions(currentNodes).empty() ? PresetJobPhase::Applying : PresetJobPhase::Clearing;
+            g_presetJob.phase = needsClear ? PresetJobPhase::Clearing : PresetJobPhase::Applying;
             g_presetJob.slot = slot;
             g_presetJob.name = preset.name;
+            g_presetJob.bulkResetAttempted = needsClear;
             g_presetJob.targetNodes = preset.nodes;
         }
 
@@ -1889,7 +1901,7 @@ namespace
 
         std::ostringstream oss;
         oss << Text().preparing << preset.name << ": "
-            << (BuildClearTalentActions(currentNodes).empty() ? Text().applyingTalents : Text().clearingTalents)
+            << (needsClear ? Text().clearingTalents : Text().applyingTalents)
             << " (" << actions.size() << Text().changes << Text().keepSkillsOpen;
         SetPresetStatus(oss.str());
     }
@@ -1904,13 +1916,15 @@ namespace
             return;
         }
 
-        std::vector<QueuedTalentAction> actions = BuildClearTalentActions(currentNodes);
-        if (actions.empty())
+        const std::vector<QueuedTalentAction> nodeClearActions = BuildClearTalentActions(currentNodes);
+        if (nodeClearActions.empty())
         {
             ClearPresetJob();
             SetPresetStatus(Text().noAssignedTalents);
             return;
         }
+
+        std::vector<QueuedTalentAction> actions = BuildBulkClearTalentActions();
 
         {
             std::lock_guard<std::mutex> lock(g_presetJobMutex);
@@ -1918,6 +1932,7 @@ namespace
             g_presetJob.mode = PresetJobMode::ClearOnly;
             g_presetJob.phase = PresetJobPhase::Clearing;
             g_presetJob.name = Text().clearTalents;
+            g_presetJob.bulkResetAttempted = true;
         }
 
         QueuePresetActionsForJob(actions);
@@ -1941,7 +1956,12 @@ namespace
 
             if (g_presetJob.waitUntilTick == 0)
             {
-                g_presetJob.waitUntilTick = now + PRESET_PHASE_SETTLE_MS;
+                const DWORD settleMs = (g_presetJob.phase == PresetJobPhase::Clearing &&
+                    g_presetJob.bulkResetAttempted &&
+                    g_presetJob.clearPass == 0)
+                    ? PRESET_BULK_CLEAR_SETTLE_MS
+                    : PRESET_PHASE_SETTLE_MS;
+                g_presetJob.waitUntilTick = now + settleMs;
                 return;
             }
 
@@ -2984,7 +3004,7 @@ namespace
         }
     }
 
-    bool EnqueueTalentMessage(std::uint32_t nodeId, std::uint8_t opcode, uintptr_t* outQueue = nullptr)
+    bool EnqueueTalentMessage(std::uint32_t nodeId, std::uint8_t opcode, uintptr_t* outQueue = nullptr, bool resetSkills = false)
     {
         uintptr_t gameRoot = 0;
         uintptr_t contextSlot = 0;
@@ -3019,10 +3039,74 @@ namespace
             return false;
         }
 
+        if (opcode == TALENT_MESSAGE_LEARN)
+        {
+            const std::uint8_t resetSkillsByte = resetSkills ? 1 : 0;
+            if (!SafeWriteValue(messagePtr + TALENT_MESSAGE_RESET_SKILLS_OFFSET, resetSkillsByte))
+            {
+                Log("[TalentPresets] failed to write resetSkills flag");
+                return false;
+            }
+        }
+
         if (outQueue != nullptr)
             *outQueue = talentQueue;
 
         return true;
+    }
+
+    bool EnqueueResetAllTalentsMessage()
+    {
+        uintptr_t queueBeforePtr = 0;
+        uintptr_t queueAfterPtr = 0;
+        uintptr_t queueBaseBefore = 0;
+        uintptr_t queueBaseAfter = 0;
+        std::uint64_t queueCountBefore = 0;
+        std::uint64_t queueCapacityBefore = 0;
+        std::uint64_t queueCountAfter = 0;
+        std::uint64_t queueCapacityAfter = 0;
+
+        uintptr_t gameRoot = 0;
+        uintptr_t contextSlot = 0;
+        uintptr_t activePlayer = 0;
+        uintptr_t talentState = 0;
+        ResolveTalentContext(gameRoot, contextSlot, activePlayer, talentState, queueBeforePtr);
+        ReadTalentQueueMetrics(queueBeforePtr, queueBaseBefore, queueCountBefore, queueCapacityBefore);
+
+        uintptr_t queuedPtr = 0;
+        const bool queued = EnqueueTalentMessage(0, TALENT_MESSAGE_LEARN, &queuedPtr, true);
+
+        ResolveTalentContext(gameRoot, contextSlot, activePlayer, talentState, queueAfterPtr);
+        ReadTalentQueueMetrics(queueAfterPtr, queueBaseAfter, queueCountAfter, queueCapacityAfter);
+
+        std::ostringstream post;
+        post << "[TalentPresets] reset-all talents message"
+            << " queued=" << (queued ? 1 : 0)
+            << " queueBefore=" << Hex(queueBeforePtr)
+            << " countBefore=" << queueCountBefore
+            << " queueAfter=" << Hex(queueAfterPtr)
+            << " countAfter=" << queueCountAfter
+            << " outQueue=" << Hex(queuedPtr);
+
+        if (queued && queueAfterPtr != 0 && queueBaseAfter != 0 && queueCountAfter > queueCountBefore)
+        {
+            const uintptr_t messagePtr = queueBaseAfter + queueCountBefore * 0x698ull;
+            std::uint8_t opcode = 0;
+            std::int32_t queuedNodeId = 0;
+            std::uint8_t resetSkills = 0;
+            SafeReadValue(messagePtr, opcode);
+            SafeReadValue(messagePtr + TALENT_MESSAGE_NODE_ID_OFFSET, queuedNodeId);
+            SafeReadValue(messagePtr + TALENT_MESSAGE_RESET_SKILLS_OFFSET, resetSkills);
+
+            post << " enqueued=1"
+                << " messagePtr=" << Hex(messagePtr)
+                << " opcode=" << static_cast<unsigned int>(opcode)
+                << " queuedNode=" << static_cast<std::uint32_t>(queuedNodeId)
+                << " resetSkills=" << static_cast<unsigned int>(resetSkills);
+        }
+
+        Log(post.str());
+        return queued;
     }
 
     bool IsLastNodeFreshFor(DWORD maxAgeMs)
@@ -3445,6 +3529,12 @@ namespace
     void BeginPresetActionPacing(const QueuedTalentAction& action, DWORD now)
     {
         std::lock_guard<std::mutex> lock(g_presetPacingMutex);
+        if (action.resetAll)
+        {
+            g_presetPacing = {};
+            return;
+        }
+
         g_presetPacing.pending = action.expectedLevelAfter >= 0;
         g_presetPacing.nodeId = action.nodeId;
         g_presetPacing.unlearn = action.unlearn;
@@ -3511,6 +3601,35 @@ namespace
         ScopedInterlockedFlag executionGuard(&g_presetActionExecuting);
         if (!executionGuard)
             return PresetActionResult::Busy;
+
+        if (action.resetAll)
+        {
+            const bool queued = EnqueueResetAllTalentsMessage();
+            bool willRetry = false;
+            if (queued || action.attempts >= 8)
+            {
+                DropPresetAction();
+            }
+            else
+            {
+                willRetry = true;
+                RetryPresetActionLater(action);
+            }
+
+            const std::size_t remaining = PresetQueueSize();
+            std::ostringstream status;
+            if (remaining == 0)
+            {
+                SetPresetStatus(Text().checkingTree);
+            }
+            else
+            {
+                status << Text().applyingPreset << remaining << Text().remaining;
+                SetPresetStatus(status.str());
+            }
+
+            return willRetry ? PresetActionResult::Retried : PresetActionResult::Progress;
+        }
 
         LiveNodeMatch match = {};
         std::size_t matchCount = 0;
@@ -4185,7 +4304,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.26 for Enshrouded 1004637");
+        Log("[TalentPresets] loading live talent preset panel 0.5.27 for Enshrouded 1004637");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
