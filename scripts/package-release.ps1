@@ -4,7 +4,7 @@ param(
     [ValidateSet('x64')]
     [string]$Platform = 'x64',
     [string]$GameVersion = '1004637',
-    [string]$ModVersion = '0.5.24'
+    [string]$ModVersion = '0.5.25'
 )
 
 $ErrorActionPreference = 'Stop'

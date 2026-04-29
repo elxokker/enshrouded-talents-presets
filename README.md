@@ -7,7 +7,7 @@ Supported game build: `1004637`
 
 Client mod id: `talents_presets`
 
-Client mod version: `0.5.24`
+Client mod version: `0.5.25`
 
 ## Features
 
