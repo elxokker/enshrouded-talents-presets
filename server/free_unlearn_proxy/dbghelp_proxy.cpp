@@ -12,9 +12,22 @@ using MiniDumpCallbackInformation = void*;
 
 namespace {
 
-constexpr std::uintptr_t kFreeUnlearnRva = 0xA5F64;
 constexpr unsigned char kOriginalJump = 0x75;
 constexpr unsigned char kPatchedJump = 0xEB;
+constexpr std::size_t kFreeUnlearnJumpOffset = 7;
+
+struct SignatureByte {
+    unsigned char value;
+    bool wildcard;
+};
+
+constexpr SignatureByte kFreeUnlearnSignature[] = {
+    {0xE8, false}, {0x00, true}, {0x00, true}, {0x00, true}, {0x00, true}, // call admin-mode check
+    {0x84, false}, {0xC0, false},                                       // test al, al
+    {0x75, false}, {0x00, true},                                        // jnz success
+    {0x0F, false}, {0xB7, false}, {0xD3, false},                        // movzx edx, bx
+    {0x48, false}, {0x8D, false}, {0x4D, false}, {0x00, true}           // lea rcx, [rbp+disp8]
+};
 
 HMODULE g_realDbgHelp = nullptr;
 
@@ -59,6 +72,45 @@ void WriteLog(const char* message)
     std::fclose(file);
 }
 
+std::uintptr_t GetModuleImageSize(HMODULE module)
+{
+    auto* base = reinterpret_cast<const unsigned char*>(module);
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        return 0;
+    }
+
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) {
+        return 0;
+    }
+
+    return static_cast<std::uintptr_t>(nt->OptionalHeader.SizeOfImage);
+}
+
+unsigned char* FindSignature(unsigned char* base, std::uintptr_t size, const SignatureByte* signature, std::size_t length)
+{
+    if (!base || size < length) {
+        return nullptr;
+    }
+
+    for (std::uintptr_t offset = 0; offset <= size - length; ++offset) {
+        bool matched = true;
+        for (std::size_t index = 0; index < length; ++index) {
+            if (!signature[index].wildcard && base[offset + index] != signature[index].value) {
+                matched = false;
+                break;
+            }
+        }
+
+        if (matched) {
+            return base + offset;
+        }
+    }
+
+    return nullptr;
+}
+
 bool PatchFreeUnlearnCost()
 {
     HMODULE exe = GetModuleHandleW(nullptr);
@@ -67,10 +119,25 @@ bool PatchFreeUnlearnCost()
         return false;
     }
 
-    auto* target = reinterpret_cast<unsigned char*>(reinterpret_cast<std::uintptr_t>(exe) + kFreeUnlearnRva);
+    auto* base = reinterpret_cast<unsigned char*>(exe);
+    const std::uintptr_t imageSize = GetModuleImageSize(exe);
+    auto* signature = FindSignature(base, imageSize, kFreeUnlearnSignature, sizeof(kFreeUnlearnSignature) / sizeof(kFreeUnlearnSignature[0]));
+    if (!signature) {
+        WriteLog("ERROR: free-unlearn signature not found. Patch not applied.");
+        return false;
+    }
+
+    auto* target = signature + kFreeUnlearnJumpOffset;
+    const std::uintptr_t targetRva = reinterpret_cast<std::uintptr_t>(target) - reinterpret_cast<std::uintptr_t>(exe);
 
     if (*target == kPatchedJump) {
-        WriteLog("OK: free-unlearn patch was already active.");
+        char msg[160]{};
+        std::snprintf(
+            msg,
+            sizeof(msg),
+            "OK: free-unlearn patch was already active at RVA 0x%llX.",
+            static_cast<unsigned long long>(targetRva));
+        WriteLog(msg);
         return true;
     }
 
@@ -79,8 +146,8 @@ bool PatchFreeUnlearnCost()
         std::snprintf(
             msg,
             sizeof(msg),
-            "ERROR: unexpected byte at RVA 0x%llX. Expected 0x%02X, found 0x%02X. Patch not applied.",
-            static_cast<unsigned long long>(kFreeUnlearnRva),
+            "ERROR: unexpected byte at signature RVA 0x%llX. Expected 0x%02X, found 0x%02X. Patch not applied.",
+            static_cast<unsigned long long>(targetRva),
             kOriginalJump,
             *target);
         WriteLog(msg);
@@ -99,7 +166,13 @@ bool PatchFreeUnlearnCost()
     DWORD ignored = 0;
     VirtualProtect(target, 1, oldProtect, &ignored);
 
-    WriteLog("OK: free-unlearn patch applied in memory. Individual talent unlearn should not consume runes.");
+    char msg[180]{};
+    std::snprintf(
+        msg,
+        sizeof(msg),
+        "OK: free-unlearn patch applied at RVA 0x%llX. Individual talent unlearn should not consume runes.",
+        static_cast<unsigned long long>(targetRva));
+    WriteLog(msg);
     return true;
 }
 

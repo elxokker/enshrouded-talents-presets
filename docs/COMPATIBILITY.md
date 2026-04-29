@@ -1,18 +1,22 @@
 # Compatibility
 
-This source tree targets Enshrouded build `1004637`.
+This source tree targets Enshrouded Steam build `23008567`.
 
-The client mod and server proxy both rely on reverse-engineered in-memory
-offsets. If Enshrouded updates, the binaries can stop working, fail their byte
-checks, or crash. Re-verify offsets before using this on a newer build.
+The client mod relies on reverse-engineered in-memory offsets. If Enshrouded
+updates, the client DLL can stop working, fail byte checks, or crash. Re-verify
+client offsets before using this on a newer build.
+
+The server proxy searches for the free-unlearn cost check by instruction
+signature instead of a fixed RVA, but the signature still needs re-verification
+after major server updates.
 
 ## Current Components
 
 - Client mod: Shroudtopia/EML-compatible DLL loaded from `mods/talents_presets`.
 - Server proxy: `dbghelp.dll` proxy loaded beside `enshrouded_server.exe`.
-- Game build: `1004637`.
+- Steam build: `23008567`.
 - Client mod id: `talents_presets`.
-- Client mod version: `0.5.27`.
+- Client mod version: `0.5.28`.
 
 ## Server Behavior
 

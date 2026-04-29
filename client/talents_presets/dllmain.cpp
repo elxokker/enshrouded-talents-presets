@@ -24,21 +24,21 @@
 
 namespace
 {
-    constexpr uintptr_t RVA_SKILL_NODE_STATUS_TICK = 0xB5BD04;
+    constexpr uintptr_t RVA_SKILL_NODE_STATUS_TICK = 0xB5F6C0;
     constexpr std::size_t SKILL_NODE_STATUS_STOLEN_SIZE = 6;
-    constexpr uintptr_t RVA_DRAW_NODE_LINK = 0xB9F260;
+    constexpr uintptr_t RVA_DRAW_NODE_LINK = 0xBA3F90;
     constexpr std::size_t DRAW_NODE_LINK_STOLEN_SIZE = 20;
-    constexpr uintptr_t RVA_SKILL_ACTION_CALLSITE = 0xB5F521;
+    constexpr uintptr_t RVA_SKILL_ACTION_CALLSITE = 0xB6318A;
     constexpr std::size_t SKILL_ACTION_CALLSITE_STOLEN_SIZE = 5;
-    constexpr uintptr_t RVA_SKILL_ACTION_CONTEXT_CHECK = 0xC9EE90;
+    constexpr uintptr_t RVA_SKILL_ACTION_CONTEXT_CHECK = 0xCA5E70;
     constexpr std::size_t SKILL_ACTION_CONTEXT_CHECK_STOLEN_SIZE = 5;
-    constexpr uintptr_t RVA_SKILL_ACTION_SLOT_RESERVE = 0xBFA880;
+    constexpr uintptr_t RVA_SKILL_ACTION_SLOT_RESERVE = 0xC00FB0;
     constexpr std::size_t SKILL_ACTION_SLOT_RESERVE_PATCH_SIZE = 7;
 
-    constexpr uintptr_t RVA_SKILL_TREE_CONTEXT_ENTRY = 0xBE3D00;
+    constexpr uintptr_t RVA_SKILL_TREE_CONTEXT_ENTRY = 0xBE9A90;
     constexpr std::size_t SKILL_TREE_CONTEXT_ENTRY_STOLEN_SIZE = 38;
-    constexpr uintptr_t RVA_UI_MESSAGE_ALLOCATOR = 0xC1D230;
-    constexpr uintptr_t RVA_GAME_CONTEXT_GLOBAL = 0x2721588;
+    constexpr uintptr_t RVA_UI_MESSAGE_ALLOCATOR = 0xC23D30;
+    constexpr uintptr_t RVA_GAME_CONTEXT_GLOBAL = 0x272D988;
     constexpr std::size_t GAME_CONTEXT_SLOT_OFFSET = 0xC8;
     constexpr std::size_t TALENT_QUEUE_OFFSET = 0x51530;
     constexpr std::size_t TALENT_POINTS_STATE_OFFSET = 0x28;
@@ -83,7 +83,7 @@ namespace
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.27",
+        "0.5.28",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -347,7 +347,7 @@ namespace
     };
 
     std::array<std::uint8_t, SKILL_ACTION_CALLSITE_STOLEN_SIZE> g_skillActionCallsiteExpected = {
-        0xE8, 0xDA, 0x47, 0x08, 0x00
+        0xE8, 0x01, 0x69, 0x08, 0x00
     };
 
     std::array<std::uint8_t, SKILL_ACTION_CONTEXT_CHECK_STOLEN_SIZE> g_skillActionContextCheckExpected = {
@@ -389,7 +389,7 @@ namespace
         0x48, 0x89, 0x74, 0x24, 0x20,
         0x57,
         0x48, 0x83, 0xEC, 0x50,
-        0x48, 0x8B, 0x2D, 0x72, 0xD8, 0xB3, 0x01,
+        0x48, 0x8B, 0x2D, 0xE2, 0x3E, 0xB4, 0x01,
         0x48, 0x8B, 0xF9,
         0x0F, 0xB6, 0xF2,
         0x48, 0x8B, 0x85, 0xC8, 0x00, 0x00, 0x00,
@@ -4304,7 +4304,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.27 for Enshrouded 1004637");
+        Log("[TalentPresets] loading live talent preset panel 0.5.28 for Enshrouded Steam build 23008567");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
