@@ -40,7 +40,7 @@ namespace
     constexpr uintptr_t RVA_UI_MESSAGE_ALLOCATOR = 0xC24930;
     constexpr uintptr_t RVA_GAME_CONTEXT_GLOBAL = 0x272E588;
     constexpr std::size_t GAME_CONTEXT_SLOT_OFFSET = 0xC8;
-    constexpr std::size_t TALENT_QUEUE_OFFSET = 0x51530;
+    constexpr std::size_t TALENT_QUEUE_OFFSET = 0x517F0;
     constexpr std::size_t TALENT_POINTS_STATE_OFFSET = 0x28;
     constexpr std::size_t TALENT_MESSAGE_NODE_ID_OFFSET = 0x5B0;
     constexpr std::size_t TALENT_MESSAGE_RESET_SKILLS_OFFSET = TALENT_MESSAGE_NODE_ID_OFFSET + 0x04;
@@ -83,7 +83,7 @@ namespace
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.30",
+        "0.5.31",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -128,6 +128,7 @@ namespace
     volatile LONG g_presetUiVisible = 0;
     volatile LONG g_hotkeyThreadStop = 0;
     volatile LONG g_lastF4HotkeyTick = 0;
+    volatile LONG g_lastF12HotkeyTick = 0;
 
     DWORD g_lastLogTick = 0;
     std::uint32_t g_lastLoggedNodeId = 0;
@@ -2750,6 +2751,8 @@ namespace
             PostMessageW(window, WM_TALENT_PRESETS_SHOW, static_cast<WPARAM>(newVisible), 0);
     }
 
+    bool ArmPendingCurrentTalentAction(std::uint8_t mode, const char* label, bool preferUnlearn);
+
     bool ClaimF4Hotkey(DWORD now)
     {
         const LONG last = InterlockedCompareExchange(&g_lastF4HotkeyTick, 0, 0);
@@ -2757,6 +2760,15 @@ namespace
             return false;
 
         return InterlockedCompareExchange(&g_lastF4HotkeyTick, static_cast<LONG>(now), last) == last;
+    }
+
+    bool ClaimF12Hotkey(DWORD now)
+    {
+        const LONG last = InterlockedCompareExchange(&g_lastF12HotkeyTick, 0, 0);
+        if (now - static_cast<DWORD>(last) < 300)
+            return false;
+
+        return InterlockedCompareExchange(&g_lastF12HotkeyTick, static_cast<LONG>(now), last) == last;
     }
 
     void HandleF4Hotkey(const char* source)
@@ -2779,17 +2791,36 @@ namespace
         TogglePresetOverlay();
     }
 
+    void HandleF12Hotkey(const char* source)
+    {
+        const DWORD now = GetTickCount();
+        if (!ClaimF12Hotkey(now))
+            return;
+
+        std::ostringstream oss;
+        oss << "[TalentPresets] F12 pressed";
+        if (source != nullptr && source[0] != '\0')
+            oss << " (" << source << ")";
+        Log(oss.str());
+        ArmPendingCurrentTalentAction(4, "pending-current-unlearn", true);
+    }
+
     unsigned __stdcall HotkeyThreadProc(void*)
     {
         Log("[TalentPresets] hotkey monitor started");
         bool wasF4Down = false;
+        bool wasF12Down = false;
         while (InterlockedCompareExchange(&g_hotkeyThreadStop, 0, 0) == 0)
         {
             const bool isF4Down = (GetAsyncKeyState(VK_F4) & 0x8000) != 0;
             if (isF4Down && !wasF4Down)
                 HandleF4Hotkey("hotkey-thread");
+            const bool isF12Down = (GetAsyncKeyState(VK_F12) & 0x8000) != 0;
+            if (isF12Down && !wasF12Down)
+                HandleF12Hotkey("hotkey-thread");
 
             wasF4Down = isF4Down;
+            wasF12Down = isF12Down;
             Sleep(20);
         }
         Log("[TalentPresets] hotkey monitor stopped");
@@ -4388,7 +4419,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.30 for Enshrouded Steam build 23008567");
+        Log("[TalentPresets] loading live talent preset panel 0.5.31 for Enshrouded Steam build 23008567");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
@@ -4554,10 +4585,7 @@ public:
         }
 
         if ((GetAsyncKeyState(VK_F12) & 1) != 0)
-        {
-            Log("[TalentPresets] F12 pressed");
-            ArmPendingCurrentTalentAction(4, "pending-current-unlearn", true);
-        }
+            HandleF12Hotkey("loader-update");
     }
 
     ModMetaData GetMetaData() override

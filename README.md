@@ -7,7 +7,7 @@ Supported Steam build: `23008567`
 
 Client mod id: `talents_presets`
 
-Client mod version: `0.5.30`
+Client mod version: `0.5.31`
 
 ## Features
 

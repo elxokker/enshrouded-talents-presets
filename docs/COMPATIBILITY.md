@@ -16,7 +16,7 @@ after major server updates.
 - Server proxy: `dbghelp.dll` proxy loaded beside `enshrouded_server.exe`.
 - Steam build: `23008567`.
 - Client mod id: `talents_presets`.
-- Client mod version: `0.5.30`.
+- Client mod version: `0.5.31`.
 
 ## Server Behavior
 
