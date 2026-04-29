@@ -71,15 +71,18 @@ namespace
     constexpr int PRESET_HEADER_HEIGHT = 82;
     constexpr int PRESET_CORNER_RADIUS = 22;
     constexpr int PRESET_MAX_JOB_PASSES = 10;
-    constexpr DWORD PRESET_ACTION_TIMER_MS = 100;
-    constexpr DWORD PRESET_CLEAR_ACTION_INTERVAL_MS = 160;
-    constexpr DWORD PRESET_LEARN_ACTION_INTERVAL_MS = 260;
-    constexpr DWORD PRESET_PHASE_SETTLE_MS = 900;
+    constexpr DWORD PRESET_ACTION_TIMER_MS = 50;
+    constexpr DWORD PRESET_CLEAR_ACTION_INTERVAL_MS = 0;
+    constexpr DWORD PRESET_LEARN_ACTION_INTERVAL_MS = 20;
+    constexpr DWORD PRESET_PHASE_SETTLE_MS = 250;
+    constexpr int PRESET_CLEAR_ACTIONS_PER_TICK = 64;
+    constexpr int PRESET_LEARN_ACTIONS_PER_TICK = 10;
+    constexpr DWORD PRESET_ACTION_TICK_BUDGET_MS = 18;
 
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.23",
+        "0.5.24",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -245,6 +248,13 @@ namespace
         std::uint32_t nodeId = 0;
         bool unlearn = false;
         int attempts = 0;
+    };
+
+    enum class PresetActionResult
+    {
+        Busy,
+        Progress,
+        Retried
     };
 
     struct PresetJobState
@@ -1745,6 +1755,12 @@ namespace
         std::stable_sort(candidates.begin(), candidates.end(),
             [](const ApplyTalentCandidate& left, const ApplyTalentCandidate& right)
             {
+                if (left.hasCoordinate != right.hasCoordinate)
+                    return left.hasCoordinate;
+
+                if (left.hasCoordinate && std::fabs(left.distanceSq - right.distanceSq) > 0.001)
+                    return left.distanceSq < right.distanceSq;
+
                 if (left.learnedLayer != right.learnedLayer)
                     return left.learnedLayer < right.learnedLayer;
 
@@ -1761,29 +1777,18 @@ namespace
         std::vector<QueuedTalentAction> actions;
         const std::vector<ApplyTalentCandidate> candidates = BuildOrderedApplyCandidates(currentNodes, targetNodes);
 
-        int maxTargetLevel = 0;
         for (const ApplyTalentCandidate& candidate : candidates)
         {
             const int targetLevel = static_cast<int>(NormalizePresetLevel(candidate.node.nodeId, candidate.node.level));
-            maxTargetLevel = (std::max)(maxTargetLevel, targetLevel);
-        }
-
-        // Spread multi-point talents across rounds. Sending three learn messages
-        // back-to-back to the same node can leave it visually stuck at 1/3.
-        for (int desiredLevel = 1; desiredLevel <= maxTargetLevel; ++desiredLevel)
-        {
-            for (const ApplyTalentCandidate& candidate : candidates)
-            {
-                const int targetLevel = static_cast<int>(NormalizePresetLevel(candidate.node.nodeId, candidate.node.level));
-                if (candidate.currentLevel < desiredLevel && targetLevel >= desiredLevel)
-                    actions.push_back({ candidate.node.nodeId, false });
-            }
+            const int missingLevels = targetLevel - candidate.currentLevel;
+            for (int count = 0; count < missingLevels; ++count)
+                actions.push_back({ candidate.node.nodeId, false });
         }
 
         if (!actions.empty())
         {
             std::ostringstream oss;
-            oss << "[TalentPresets] apply action rounds actions=" << actions.size();
+            oss << "[TalentPresets] apply action saved-order actions=" << actions.size();
             for (const ApplyTalentCandidate& candidate : candidates)
             {
                 const int targetLevel = static_cast<int>(NormalizePresetLevel(candidate.node.nodeId, candidate.node.level));
@@ -1792,6 +1797,7 @@ namespace
                 oss << " " << candidate.node.nodeId
                     << ":" << candidate.currentLevel
                     << "->" << targetLevel
+                    << "@D" << (candidate.hasCoordinate ? static_cast<int>(candidate.distanceSq) : -1)
                     << "@L" << candidate.learnedLayer;
             }
             Log(oss.str());
@@ -2079,6 +2085,35 @@ namespace
         return result;
     }
 
+    bool IsPresetWindowOrChild(HWND hwnd)
+    {
+        HWND presetWindow = g_presetWindow;
+        if (hwnd == nullptr || presetWindow == nullptr)
+            return false;
+
+        return hwnd == presetWindow || IsChild(presetWindow, hwnd);
+    }
+
+    bool IsGameWindowOrChild(HWND hwnd)
+    {
+        HWND gameWindow = FindGameWindow();
+        if (hwnd == nullptr || gameWindow == nullptr)
+            return false;
+
+        return hwnd == gameWindow || IsChild(gameWindow, hwnd);
+    }
+
+    bool IsGameForeground()
+    {
+        return IsGameWindowOrChild(GetForegroundWindow());
+    }
+
+    bool IsGameInteractionForeground()
+    {
+        HWND foreground = GetForegroundWindow();
+        return IsGameWindowOrChild(foreground) || IsPresetWindowOrChild(foreground);
+    }
+
     bool IsPresetNameEdit(HWND hwnd)
     {
         if (hwnd == nullptr)
@@ -2363,9 +2398,26 @@ namespace
         case WM_TIMER:
             if (wParam == PRESET_UI_TIMER)
             {
-                ProcessPresetActionQueueTick(GetTickCount());
+                const bool gameInteractionForeground = IsGameInteractionForeground();
+                if (gameInteractionForeground)
+                    ProcessPresetActionQueueTick(GetTickCount());
+
                 if (InterlockedCompareExchange(&g_presetUiVisible, 0, 0) == 1)
-                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                {
+                    if (gameInteractionForeground)
+                    {
+                        if (!IsWindowVisible(hwnd))
+                        {
+                            PositionPresetWindow();
+                            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                        }
+                        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    }
+                    else if (IsWindowVisible(hwnd))
+                    {
+                        ShowWindow(hwnd, SW_HIDE);
+                    }
+                }
                 if (g_presetStatusLabel != nullptr)
                     SetWindowTextW(g_presetStatusLabel, GetPresetStatusWide().c_str());
             }
@@ -2619,10 +2671,23 @@ namespace
 
     void TogglePresetOverlay()
     {
+        const LONG wasVisible = InterlockedCompareExchange(&g_presetUiVisible, 0, 0);
+        const LONG newVisible = wasVisible == 0 ? 1 : 0;
+        if (newVisible != 0 && !IsGameForeground())
+        {
+            Log("[TalentPresets] F4 ignored because Enshrouded is not the foreground window");
+            return;
+        }
+
+        if (newVisible == 0 && !IsGameInteractionForeground())
+        {
+            Log("[TalentPresets] F4 ignored because neither Enshrouded nor the preset panel is foreground");
+            return;
+        }
+
         if (!EnsurePresetUiThread())
             return;
 
-        const LONG newVisible = InterlockedCompareExchange(&g_presetUiVisible, 0, 0) == 0 ? 1 : 0;
         InterlockedExchange(&g_presetUiVisible, newVisible);
 
         for (int attempt = 0; attempt < 50 && g_presetWindow == nullptr; ++attempt)
@@ -3351,11 +3416,11 @@ namespace
         Log(oss.str());
     }
 
-    bool ExecutePresetQueuedAction(const QueuedTalentAction& action)
+    PresetActionResult ExecutePresetQueuedAction(const QueuedTalentAction& action)
     {
         ScopedInterlockedFlag executionGuard(&g_presetActionExecuting);
         if (!executionGuard)
-            return false;
+            return PresetActionResult::Busy;
 
         LiveNodeMatch match = {};
         std::size_t matchCount = 0;
@@ -3364,7 +3429,7 @@ namespace
         if (haveMatch && action.unlearn && CurrentTalentLevel(match) == 0)
         {
             DropPresetAction();
-            return true;
+            return PresetActionResult::Progress;
         }
 
         if (haveMatch && !action.unlearn &&
@@ -3372,14 +3437,14 @@ namespace
             CurrentTalentLevel(match) > 0)
         {
             DropPresetAction();
-            return true;
+            return PresetActionResult::Progress;
         }
 
         if (haveMatch && !action.unlearn && match.state40 != 0xFF && match.state40 > 0 &&
             match.state41 != 0xFF && match.state41 >= match.state40)
         {
             DropPresetAction();
-            return true;
+            return PresetActionResult::Progress;
         }
 
         uintptr_t queueBeforePtr = 0;
@@ -3468,24 +3533,48 @@ namespace
             SetPresetStatus(status.str());
         }
 
-        return true;
+        return willRetry ? PresetActionResult::Retried : PresetActionResult::Progress;
     }
 
     void ProcessPresetActionQueueTick(DWORD now)
     {
-        QueuedTalentAction presetAction = {};
-        std::size_t presetQueueSize = 0;
-        if (!TryPeekPresetAction(presetAction, presetQueueSize))
-            return;
+        const DWORD startedAt = now;
+        int processed = 0;
 
-        const DWORD interval = presetAction.unlearn
-            ? PRESET_CLEAR_ACTION_INTERVAL_MS
-            : PRESET_LEARN_ACTION_INTERVAL_MS;
-        if (now - g_lastPresetQueueProcessTick < interval)
-            return;
+        while (true)
+        {
+            QueuedTalentAction presetAction = {};
+            std::size_t presetQueueSize = 0;
+            if (!TryPeekPresetAction(presetAction, presetQueueSize))
+                return;
 
-        if (ExecutePresetQueuedAction(presetAction))
+            const DWORD interval = presetAction.unlearn
+                ? PRESET_CLEAR_ACTION_INTERVAL_MS
+                : PRESET_LEARN_ACTION_INTERVAL_MS;
+            if (processed == 0 && now - g_lastPresetQueueProcessTick < interval)
+                return;
+
+            const int maxActions = presetAction.unlearn
+                ? PRESET_CLEAR_ACTIONS_PER_TICK
+                : PRESET_LEARN_ACTIONS_PER_TICK;
+
+            const PresetActionResult result = ExecutePresetQueuedAction(presetAction);
+            if (result == PresetActionResult::Busy)
+                return;
+
             g_lastPresetQueueProcessTick = now;
+            ++processed;
+
+            if (result == PresetActionResult::Retried)
+                return;
+
+            if (processed >= maxActions)
+                return;
+
+            now = GetTickCount();
+            if (now - startedAt >= PRESET_ACTION_TICK_BUDGET_MS)
+                return;
+        }
     }
 
     bool IsPresetActionQueueActive()
@@ -4011,7 +4100,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.23 for Enshrouded 999467");
+        Log("[TalentPresets] loading live talent preset panel 0.5.24 for Enshrouded 999467");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
