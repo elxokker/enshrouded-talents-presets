@@ -44,6 +44,6 @@ build/x64/Release/server/dbghelp.dll
 Output:
 
 ```text
-dist/enshrouded-talents-presets-23008567-0.5.31/
-dist/enshrouded-talents-presets-23008567-0.5.31.zip
+dist/enshrouded-talents-presets-23008567-0.5.32/
+dist/enshrouded-talents-presets-23008567-0.5.32.zip
 ```

@@ -44,8 +44,8 @@ namespace
     constexpr std::size_t TALENT_POINTS_STATE_OFFSET = 0x28;
     constexpr std::size_t TALENT_MESSAGE_NODE_ID_OFFSET = 0x5B0;
     constexpr std::size_t TALENT_MESSAGE_RESET_SKILLS_OFFSET = TALENT_MESSAGE_NODE_ID_OFFSET + 0x04;
-    constexpr std::uint8_t TALENT_MESSAGE_LEARN = 0x42;
-    constexpr std::uint8_t TALENT_MESSAGE_UNLEARN = 0x43;
+    constexpr std::uint8_t TALENT_MESSAGE_LEARN = 0x43;
+    constexpr std::uint8_t TALENT_MESSAGE_UNLEARN = 0x44;
     constexpr DWORD NODE_CAPTURE_STALE_MS = 10000;
     constexpr DWORD NODE_DIRECT_ACTION_FRESH_MS = 1500;
     constexpr int MAX_NODE_SAMPLES = 256;
@@ -83,7 +83,7 @@ namespace
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.31",
+        "0.5.32",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -4419,7 +4419,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.31 for Enshrouded Steam build 23008567");
+        Log("[TalentPresets] loading live talent preset panel 0.5.32 for Enshrouded Steam build 23008567");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
