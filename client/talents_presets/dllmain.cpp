@@ -24,21 +24,21 @@
 
 namespace
 {
-    constexpr uintptr_t RVA_SKILL_NODE_STATUS_TICK = 0xB5F6C0;
+    constexpr uintptr_t RVA_SKILL_NODE_STATUS_TICK = 0xB602C0;
     constexpr std::size_t SKILL_NODE_STATUS_STOLEN_SIZE = 6;
-    constexpr uintptr_t RVA_DRAW_NODE_LINK = 0xBA3F90;
+    constexpr uintptr_t RVA_DRAW_NODE_LINK = 0xBA4B90;
     constexpr std::size_t DRAW_NODE_LINK_STOLEN_SIZE = 20;
-    constexpr uintptr_t RVA_SKILL_ACTION_CALLSITE = 0xB6318A;
+    constexpr uintptr_t RVA_SKILL_ACTION_CALLSITE = 0xB63D8A;
     constexpr std::size_t SKILL_ACTION_CALLSITE_STOLEN_SIZE = 5;
-    constexpr uintptr_t RVA_SKILL_ACTION_CONTEXT_CHECK = 0xCA5E70;
+    constexpr uintptr_t RVA_SKILL_ACTION_CONTEXT_CHECK = 0xCA6A70;
     constexpr std::size_t SKILL_ACTION_CONTEXT_CHECK_STOLEN_SIZE = 5;
-    constexpr uintptr_t RVA_SKILL_ACTION_SLOT_RESERVE = 0xC00FB0;
+    constexpr uintptr_t RVA_SKILL_ACTION_SLOT_RESERVE = 0xC01BB0;
     constexpr std::size_t SKILL_ACTION_SLOT_RESERVE_PATCH_SIZE = 7;
 
-    constexpr uintptr_t RVA_SKILL_TREE_CONTEXT_ENTRY = 0xBE9A90;
+    constexpr uintptr_t RVA_SKILL_TREE_CONTEXT_ENTRY = 0xBEA690;
     constexpr std::size_t SKILL_TREE_CONTEXT_ENTRY_STOLEN_SIZE = 38;
-    constexpr uintptr_t RVA_UI_MESSAGE_ALLOCATOR = 0xC23D30;
-    constexpr uintptr_t RVA_GAME_CONTEXT_GLOBAL = 0x272D988;
+    constexpr uintptr_t RVA_UI_MESSAGE_ALLOCATOR = 0xC24930;
+    constexpr uintptr_t RVA_GAME_CONTEXT_GLOBAL = 0x272E588;
     constexpr std::size_t GAME_CONTEXT_SLOT_OFFSET = 0xC8;
     constexpr std::size_t TALENT_QUEUE_OFFSET = 0x51530;
     constexpr std::size_t TALENT_POINTS_STATE_OFFSET = 0x28;
@@ -83,7 +83,7 @@ namespace
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.28",
+        "0.5.29",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -4304,7 +4304,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.28 for Enshrouded Steam build 23008567");
+        Log("[TalentPresets] loading live talent preset panel 0.5.29 for Enshrouded Steam build 23008567");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
