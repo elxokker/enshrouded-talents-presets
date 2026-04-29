@@ -12,7 +12,7 @@ checks, or crash. Re-verify offsets before using this on a newer build.
 - Server proxy: `dbghelp.dll` proxy loaded beside `enshrouded_server.exe`.
 - Game build: `1004637`.
 - Client mod id: `talents_presets`.
-- Client mod version: `0.5.25`.
+- Client mod version: `0.5.26`.
 
 ## Server Behavior
 

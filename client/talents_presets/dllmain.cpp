@@ -71,15 +71,17 @@ namespace
     constexpr int PRESET_HEADER_HEIGHT = 82;
     constexpr int PRESET_CORNER_RADIUS = 22;
     constexpr int PRESET_MAX_JOB_PASSES = 10;
-    constexpr DWORD PRESET_ACTION_TIMER_MS = 100;
+    constexpr DWORD PRESET_ACTION_TIMER_MS = 50;
     constexpr DWORD PRESET_CLEAR_ACTION_INTERVAL_MS = 160;
     constexpr DWORD PRESET_LEARN_ACTION_INTERVAL_MS = 260;
     constexpr DWORD PRESET_PHASE_SETTLE_MS = 900;
+    constexpr DWORD PRESET_CLEAR_VERIFY_MIN_MS = 40;
+    constexpr DWORD PRESET_LEARN_VERIFY_MIN_MS = 80;
 
     ModMetaData g_metaData = {
         "talents_presets",
         "Live in-game talent preset panel.",
-        "0.5.25",
+        "0.5.26",
         "xoker and contributors",
         "0.0.3",
         true,
@@ -245,6 +247,7 @@ namespace
         std::uint32_t nodeId = 0;
         bool unlearn = false;
         int attempts = 0;
+        int expectedLevelAfter = -1;
     };
 
     enum class PresetActionResult
@@ -264,6 +267,15 @@ namespace
         DWORD waitUntilTick = 0;
         std::string name;
         std::vector<PresetNode> targetNodes;
+    };
+
+    struct PresetPacingState
+    {
+        bool pending = false;
+        std::uint32_t nodeId = 0;
+        bool unlearn = false;
+        int expectedLevelAfter = -1;
+        DWORD sentTick = 0;
     };
 
     struct ScopedInterlockedFlag
@@ -293,9 +305,11 @@ namespace
     std::mutex g_presetsMutex;
     std::mutex g_presetQueueMutex;
     std::mutex g_presetJobMutex;
+    std::mutex g_presetPacingMutex;
     std::mutex g_statusMutex;
     std::vector<QueuedTalentAction> g_presetActionQueue;
     PresetJobState g_presetJob;
+    PresetPacingState g_presetPacing;
     std::string g_presetStatus = "F4 opens/closes presets. Save current captures your assigned talents.";
     std::string g_presetFilePath;
     std::string g_presetUiFilePath;
@@ -1592,6 +1606,10 @@ namespace
     {
         ReplacePresetQueue(actions);
         g_lastPresetQueueProcessTick = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_presetPacingMutex);
+            g_presetPacing = {};
+        }
         SetPresetJobWait(0);
     }
 
@@ -1636,7 +1654,7 @@ namespace
         {
             const std::uint8_t level = NormalizePresetLevel(it->nodeId, it->level);
             for (int count = 0; count < static_cast<int>(level); ++count)
-                actions.push_back({ it->nodeId, true });
+                actions.push_back({ it->nodeId, true, 0, static_cast<int>(level) - count - 1 });
         }
         return actions;
     }
@@ -1789,7 +1807,7 @@ namespace
             {
                 const int targetLevel = static_cast<int>(NormalizePresetLevel(candidate.node.nodeId, candidate.node.level));
                 if (candidate.currentLevel < desiredLevel && targetLevel >= desiredLevel)
-                    actions.push_back({ candidate.node.nodeId, false });
+                    actions.push_back({ candidate.node.nodeId, false, 0, desiredLevel });
             }
         }
 
@@ -3424,6 +3442,70 @@ namespace
         Log(oss.str());
     }
 
+    void BeginPresetActionPacing(const QueuedTalentAction& action, DWORD now)
+    {
+        std::lock_guard<std::mutex> lock(g_presetPacingMutex);
+        g_presetPacing.pending = action.expectedLevelAfter >= 0;
+        g_presetPacing.nodeId = action.nodeId;
+        g_presetPacing.unlearn = action.unlearn;
+        g_presetPacing.expectedLevelAfter = action.expectedLevelAfter;
+        g_presetPacing.sentTick = now;
+    }
+
+    void ClearPresetActionPacing()
+    {
+        std::lock_guard<std::mutex> lock(g_presetPacingMutex);
+        g_presetPacing = {};
+    }
+
+    bool IsPresetActionConfirmed(const PresetPacingState& pacing)
+    {
+        if (!pacing.pending || pacing.expectedLevelAfter < 0)
+            return true;
+
+        LiveNodeMatch match = {};
+        if (!FindLiveNodeById(pacing.nodeId, match, nullptr))
+            return false;
+
+        const int level = CurrentTalentLevel(match);
+        return pacing.unlearn
+            ? level <= pacing.expectedLevelAfter
+            : level >= pacing.expectedLevelAfter;
+    }
+
+    bool ShouldWaitForPresetPacing(const QueuedTalentAction& nextAction, DWORD now)
+    {
+        PresetPacingState pacing = {};
+        {
+            std::lock_guard<std::mutex> lock(g_presetPacingMutex);
+            pacing = g_presetPacing;
+        }
+
+        if (!pacing.pending)
+            return false;
+
+        const DWORD stableFallback = pacing.unlearn
+            ? PRESET_CLEAR_ACTION_INTERVAL_MS
+            : PRESET_LEARN_ACTION_INTERVAL_MS;
+        const DWORD adaptiveMinimum = pacing.unlearn
+            ? PRESET_CLEAR_VERIFY_MIN_MS
+            : PRESET_LEARN_VERIFY_MIN_MS;
+
+        const bool sameLearnNode = !pacing.unlearn && !nextAction.unlearn && pacing.nodeId == nextAction.nodeId;
+        const DWORD minimumWait = sameLearnNode ? PRESET_LEARN_ACTION_INTERVAL_MS : adaptiveMinimum;
+
+        if (now - pacing.sentTick < minimumWait)
+            return true;
+
+        if (IsPresetActionConfirmed(pacing) || now - pacing.sentTick >= stableFallback)
+        {
+            ClearPresetActionPacing();
+            return false;
+        }
+
+        return true;
+    }
+
     PresetActionResult ExecutePresetQueuedAction(const QueuedTalentAction& action)
     {
         ScopedInterlockedFlag executionGuard(&g_presetActionExecuting);
@@ -3433,8 +3515,21 @@ namespace
         LiveNodeMatch match = {};
         std::size_t matchCount = 0;
         const bool haveMatch = FindLiveNodeById(action.nodeId, match, &matchCount);
+        const int liveLevel = haveMatch ? CurrentTalentLevel(match) : -1;
 
-        if (haveMatch && action.unlearn && CurrentTalentLevel(match) == 0)
+        if (haveMatch && action.unlearn && liveLevel == 0)
+        {
+            DropPresetAction();
+            return PresetActionResult::Progress;
+        }
+
+        if (haveMatch && action.unlearn && action.expectedLevelAfter >= 0 && liveLevel <= action.expectedLevelAfter)
+        {
+            DropPresetAction();
+            return PresetActionResult::Progress;
+        }
+
+        if (haveMatch && !action.unlearn && action.expectedLevelAfter >= 0 && liveLevel >= action.expectedLevelAfter)
         {
             DropPresetAction();
             return PresetActionResult::Progress;
@@ -3442,7 +3537,7 @@ namespace
 
         if (haveMatch && !action.unlearn &&
             (IsSingleUnlockTalent(match.nodeId) || match.state40 == 0 || match.state40 == 0xFF) &&
-            CurrentTalentLevel(match) > 0)
+            liveLevel > 0)
         {
             DropPresetAction();
             return PresetActionResult::Progress;
@@ -3481,6 +3576,8 @@ namespace
         bool willRetry = false;
         if (queued || action.attempts >= 8)
         {
+            if (queued)
+                BeginPresetActionPacing(action, GetTickCount());
             DropPresetAction();
         }
         else
@@ -3551,10 +3648,13 @@ namespace
         if (!TryPeekPresetAction(presetAction, presetQueueSize))
             return;
 
-        const DWORD interval = presetAction.unlearn
-            ? PRESET_CLEAR_ACTION_INTERVAL_MS
-            : PRESET_LEARN_ACTION_INTERVAL_MS;
-        if (now - g_lastPresetQueueProcessTick < interval)
+        if (ShouldWaitForPresetPacing(presetAction, now))
+            return;
+
+        const DWORD minimumInterval = presetAction.unlearn
+            ? PRESET_CLEAR_VERIFY_MIN_MS
+            : PRESET_LEARN_VERIFY_MIN_MS;
+        if (now - g_lastPresetQueueProcessTick < minimumInterval)
             return;
 
         const PresetActionResult result = ExecutePresetQueuedAction(presetAction);
@@ -4085,7 +4185,7 @@ public:
         LoadPresetsFromDisk();
         LoadPresetUiPosition();
 
-        Log("[TalentPresets] loading live talent preset panel 0.5.25 for Enshrouded 1004637");
+        Log("[TalentPresets] loading live talent preset panel 0.5.26 for Enshrouded 1004637");
         Log(std::string("[TalentPresets] ui language ") + Text().languageCode);
         if (!g_presetFilePath.empty())
             Log(std::string("[TalentPresets] preset file ") + g_presetFilePath);
@@ -4214,8 +4314,15 @@ public:
 
         if ((GetAsyncKeyState(VK_F4) & 1) != 0)
         {
-            Log("[TalentPresets] F4 pressed");
-            TogglePresetOverlay();
+            if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+            {
+                Log("[TalentPresets] Alt+F4 ignored by preset panel");
+            }
+            else
+            {
+                Log("[TalentPresets] F4 pressed");
+                TogglePresetOverlay();
+            }
         }
 
         if ((GetAsyncKeyState(VK_F8) & 1) != 0)
